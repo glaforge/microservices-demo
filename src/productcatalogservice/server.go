@@ -39,6 +39,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	translate "cloud.google.com/go/translate"
+	language "golang.org/x/text/language"
+
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -216,8 +219,51 @@ func readCatalogFile(catalog *pb.ListProductsResponse) error {
 		log.Warnf("failed to parse the catalog JSON: %v", err)
 		return err
 	}
+	if err := translateCatalog(); err != nil {
+		log.Warnf("failed to translate catalog product labels: %v", err)
+	}
 	log.Info("successfully parsed product catalog json")
 	return nil
+}
+
+func translateCatalog() error {
+	log.Info("translating catalog")
+	productNames := make([]string, len(cat.Products))
+	productDescriptions := make([]string, len(cat.Products))
+
+	for i, product := range cat.Products {
+		productNames[i] = strings.ToUpper(product.Name)
+		productDescriptions[i] = strings.ToUpper(product.Description)
+	}
+
+	// translate product names
+	translatedProductNames, err := translateLabels(productNames)
+	for i, translatedName := range translatedProductNames {
+		cat.Products[i].Name = translatedName.Text
+	}
+	if err != nil {
+		return err
+	}
+
+	// translate product descriptions
+	translatedProductDescriptions, err := translateLabels(productDescriptions)
+	for i, translatedDesc := range translatedProductDescriptions {
+		cat.Products[i].Description = translatedDesc.Text
+	}
+
+	return err
+}
+
+func translateLabels(labels []string) ([]translate.Translation, error) {
+	ctx := context.Background()
+
+	client, err := translate.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	return client.Translate(ctx, labels, language.Arabic, nil)
 }
 
 func parseCatalog() []*pb.Product {
